@@ -102,7 +102,7 @@ class SerpApiClient:
 
             origin = segments[0]["departure_airport"]["id"]
             destination = segments[-1]["arrival_airport"]["id"]
-            departure_date = segments[0]["departure_time"][:10]
+            departure_date = segments[0]["departure_airport"]["time"][:10]
             num_stops = len(segments) - 1
 
             airlines = " / ".join(
