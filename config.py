@@ -26,7 +26,7 @@ SHEET_SETTINGS = "Settings"
 DASHBOARD_HEADERS = [
     "Route", "Cheapest (CAD)", "Departure Date",
     "Airlines", "Stops", "Duration", "Source", "Last Checked",
-    "vs. Your Threshold", "Book Now", "Also Compare On"
+    "vs. Your Threshold", "Google Flights", "Skyscanner", "Kayak"
 ]
 
 # Price History column headers
