@@ -27,18 +27,23 @@ COLOR_HIST_HDR  = {"red": 0.235, "green": 0.235, "blue": 0.235}  # dark grey
 
 class SheetsClient:
     def __init__(self):
-        sa_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].strip().strip("'\"")
         sheet_id = os.environ["GOOGLE_SHEET_ID"].strip()
 
-        if not sa_json:
-            raise ValueError(
-                "GOOGLE_SERVICE_ACCOUNT_JSON is empty. "
-                "Paste the raw JSON content into the GitHub secret (no surrounding quotes)."
-            )
+        # Prefer file path (GitHub Actions) over inline JSON (local .env)
+        sa_path = os.environ.get("GOOGLE_SERVICE_ACCOUNT_PATH", "")
+        if sa_path and os.path.exists(sa_path):
+            with open(sa_path) as f:
+                sa_info = json.load(f)
+        else:
+            sa_json = os.environ.get("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip().strip("'\"")
+            if not sa_json:
+                raise ValueError(
+                    "Set GOOGLE_SERVICE_ACCOUNT_PATH (file path) or "
+                    "GOOGLE_SERVICE_ACCOUNT_JSON (raw JSON) in your environment."
+                )
+            sa_info = json.loads(sa_json)
 
-        creds = Credentials.from_service_account_info(
-            json.loads(sa_json), scopes=SCOPES
-        )
+        creds = Credentials.from_service_account_info(sa_info, scopes=SCOPES)
         gc = gspread.authorize(creds)
         self._sheet = gc.open_by_key(sheet_id)
 
