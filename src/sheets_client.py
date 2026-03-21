@@ -27,8 +27,14 @@ COLOR_HIST_HDR  = {"red": 0.235, "green": 0.235, "blue": 0.235}  # dark grey
 
 class SheetsClient:
     def __init__(self):
-        sa_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"]
-        sheet_id = os.environ["GOOGLE_SHEET_ID"]
+        sa_json = os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"].strip().strip("'\"")
+        sheet_id = os.environ["GOOGLE_SHEET_ID"].strip()
+
+        if not sa_json:
+            raise ValueError(
+                "GOOGLE_SERVICE_ACCOUNT_JSON is empty. "
+                "Paste the raw JSON content into the GitHub secret (no surrounding quotes)."
+            )
 
         creds = Credentials.from_service_account_info(
             json.loads(sa_json), scopes=SCOPES
