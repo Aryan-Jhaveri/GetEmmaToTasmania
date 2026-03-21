@@ -214,4 +214,4 @@ SerpAPI is called once per origin-destination pair. 3 cities × 2 destinations =
 
 ---
 
-*Built for Emma with ❤️ — [IMPLEMENTATIONS.md](IMPLEMENTATIONS.md) for future improvements*
+
