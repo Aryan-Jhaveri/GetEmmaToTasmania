@@ -44,7 +44,7 @@ Used to track trends over time. Add a Line Chart in Sheets to visualise price ch
 | Destination Airports | `HBA, LST` |
 | Search Start Date | `2026-06-01` |
 | Search End Date | `2026-06-30` |
-| Alert Threshold (CAD) | `2000` |
+| Alert Threshold (CAD) | `1500` |
 | Notification Email | `emma@gmail.com` |
 
 Changes take effect on the next morning's run — no code needed.
@@ -82,7 +82,7 @@ Changes take effect on the next morning's run — no code needed.
    | Search Start Date | 2026-06-01 |
    | Search End Date | 2026-06-30 |
    | Date Step (days) | 7 |
-   | Alert Threshold (CAD) | 2000 |
+   | Alert Threshold (CAD) | 1500 |
    | Notification Email | emma@gmail.com |
    | Min Price Drop for Re-alert (%) | 5 |
 

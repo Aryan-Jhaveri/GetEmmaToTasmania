@@ -4,7 +4,7 @@
 DEFAULT_ORIGINS = ["YYZ"]
 DEFAULT_DESTINATIONS = ["HBA", "LST"]
 DEFAULT_DATE_STEP_DAYS = 7          # Search one departure per week
-DEFAULT_ALERT_THRESHOLD_CAD = 2000
+DEFAULT_ALERT_THRESHOLD_CAD = 1500
 DEFAULT_MIN_DROP_PCT = 5            # Re-alert if price drops another 5%
 
 # Amadeus search preferences
