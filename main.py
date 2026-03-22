@@ -34,6 +34,25 @@ def parse_list(value: str) -> list[str]:
 def main() -> None:
     logger.info("=== Emma's Flight Tracker starting ===")
 
+    today = date.today()
+
+    # ------------------------------------------------------------------
+    # Expiry guard — stop all runs after the last departure date
+    # ------------------------------------------------------------------
+    expiry = date.fromisoformat(config.TRACKER_EXPIRY_DATE)
+    if today > expiry:
+        logger.info(
+            "Tracker mission complete — search window ended %s (%d day(s) ago). "
+            "Disable the GitHub Actions workflow: "
+            "Settings → Actions → Workflows → Daily Flight Check → Disable.",
+            config.TRACKER_EXPIRY_DATE,
+            (today - expiry).days,
+        )
+        return
+
+    days_left = (expiry - today).days
+    logger.info("Tracker active — %d day(s) remaining until expiry (%s).", days_left, expiry)
+
     # ------------------------------------------------------------------
     # 1. Read settings from Google Sheets
     # ------------------------------------------------------------------
@@ -45,7 +64,6 @@ def main() -> None:
     destinations = parse_list(settings.get("Destination Airports", ",".join(config.DEFAULT_DESTINATIONS)))
 
     # Date range: default to next ~6 weeks if not configured
-    today = date.today()
     default_start = (today + timedelta(days=30)).isoformat()
     default_end = (today + timedelta(days=90)).isoformat()
     start_date = settings.get("Search Start Date", default_start)
@@ -54,6 +72,9 @@ def main() -> None:
     threshold = float(settings.get("Alert Threshold (CAD)", config.DEFAULT_ALERT_THRESHOLD_CAD))
     min_drop_pct = float(settings.get("Min Price Drop for Re-alert (%)", config.DEFAULT_MIN_DROP_PCT))
     recipient = settings.get("Notification Email", os.environ.get("GMAIL_ADDRESS", ""))
+
+    # Booking nudge — flag passed to notifier when the deadline is approaching
+    booking_nudge = today >= date.fromisoformat(config.TRACKER_BOOKING_NUDGE)
 
     logger.info(
         "Searching %s → %s from %s to %s (every %dd)",
@@ -104,7 +125,10 @@ def main() -> None:
     # ------------------------------------------------------------------
     if deals and recipient:
         notifier = EmailNotifier()
-        notifier.send_alert(deals, best_offers, recipient, threshold, historical_mins, raw_offers)
+        notifier.send_alert(
+            deals, best_offers, recipient, threshold, historical_mins,
+            raw_offers, booking_nudge=booking_nudge,
+        )
     elif deals and not recipient:
         logger.warning("Deals found but no Notification Email set in Settings!")
     else:

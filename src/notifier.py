@@ -25,12 +25,13 @@ class EmailNotifier:
         threshold: float,
         historical_mins: dict[str, float],
         raw_offers: list[FlightOffer] | None = None,
+        booking_nudge: bool = False,
     ) -> None:
         if not deals:
             return
 
-        subject = self._subject(deals)
-        html = self._build_html(deals, all_offers, threshold, historical_mins, raw_offers or [])
+        subject = self._subject(deals, booking_nudge)
+        html = self._build_html(deals, all_offers, threshold, historical_mins, raw_offers or [], booking_nudge)
 
         msg = MIMEMultipart("alternative")
         msg["Subject"] = subject
@@ -49,10 +50,11 @@ class EmailNotifier:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _subject(deals: list[FlightOffer]) -> str:
+    def _subject(deals: list[FlightOffer], booking_nudge: bool = False) -> str:
         best = min(deals, key=lambda o: o.price_cad)
+        prefix = "⚠️ BOOK SOON — " if booking_nudge else "✈️ "
         return (
-            f"✈️ Flight Deal: {best.origin} → {best.destination} "
+            f"{prefix}Flight Deal: {best.origin} → {best.destination} "
             f"for {best.price_display} ({best.departure_date})"
         )
 
@@ -63,10 +65,12 @@ class EmailNotifier:
         threshold: float,
         historical_mins: dict[str, float],
         raw_offers: list[FlightOffer],
+        booking_nudge: bool = False,
     ) -> str:
         deal_cards = "\n".join(self._deal_card(d, historical_mins) for d in deals)
         other_rows = self._other_prices_table(all_offers, deals)
         insights_block = self._insights_block(deals, raw_offers, historical_mins, threshold)
+        nudge_banner = self._nudge_banner() if booking_nudge else ""
 
         from datetime import datetime
         run_time = datetime.utcnow().strftime("%B %d, %Y at %I:%M %p UTC")
@@ -86,6 +90,9 @@ class EmailNotifier:
   .container {{ max-width: 600px; margin: 0 auto; }}
   h1 {{ font-size: 22px; margin-bottom: 4px; }}
   .subtitle {{ color: #6e6e73; font-size: 14px; margin-bottom: 24px; }}
+  .nudge {{ background: #ff3b30; color: white; border-radius: 12px; padding: 16px 20px;
+            margin-bottom: 20px; font-size: 15px; font-weight: 600; text-align: center;
+            line-height: 1.5; }}
   .card {{ background: white; border-radius: 12px; padding: 20px;
            margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,0.08); }}
   .route {{ font-size: 20px; font-weight: 700; margin-bottom: 8px; }}
@@ -131,6 +138,8 @@ class EmailNotifier:
     Good news — we found prices below your ${threshold:,.0f} CAD alert threshold.
     Here's everything you need to decide and book.
   </p>
+
+  {nudge_banner}
 
   {deal_cards}
 
@@ -180,6 +189,25 @@ class EmailNotifier:
   <a class="book-btn" href="{primary['url']}">{primary['label']} →</a>
   {secondary_buttons}
 </div>"""
+
+    @staticmethod
+    def _nudge_banner() -> str:
+        from datetime import date
+        import config as _cfg
+        deadline = date.fromisoformat(_cfg.TRACKER_BOOKING_DEADLINE)
+        days_left = (deadline - date.today()).days
+        if days_left > 0:
+            countdown = f"{days_left} day{'s' if days_left != 1 else ''} left to book"
+        else:
+            countdown = "booking deadline has passed"
+        return (
+            f'<div class="nudge">'
+            f'⚠️ Book by {deadline.strftime("%B %d, %Y")} — {countdown}!<br>'
+            f'<span style="font-weight:400;font-size:13px;">'
+            f'Flights depart in June. Prices typically rise as departure approaches.'
+            f'</span>'
+            f'</div>'
+        )
 
     @staticmethod
     def _insights_block(

@@ -1,5 +1,14 @@
 # Static defaults — override via the Settings tab in Google Sheets
 
+# Tracker lifecycle
+# After EXPIRY_DATE the script exits immediately (no API calls, no email).
+# After BOOKING_NUDGE_DATE a "book soon" countdown banner appears in every email.
+# To disable the daily GitHub Actions cron after expiry:
+#   Repository → Settings → Actions → Workflows → Daily Flight Check → Disable workflow
+TRACKER_EXPIRY_DATE    = "2026-06-30"   # last departure date — stop tracking after this
+TRACKER_BOOKING_NUDGE  = "2026-05-25"   # start showing "book soon" banner in emails
+TRACKER_BOOKING_DEADLINE = "2026-05-31" # hard deadline shown in the banner
+
 # Default search parameters
 DEFAULT_ORIGINS = ["YYZ"]
 DEFAULT_DESTINATIONS = ["HBA", "LST"]

@@ -1,5 +1,10 @@
 name: Daily Flight Check
 
+# Tracker active through 2026-06-30 (last departure date).
+# After that the Python script exits immediately — no API calls are made.
+# To stop the cron from triggering entirely once the tracker has expired:
+#   Repository → Settings → Actions → Workflows → Daily Flight Check → Disable workflow
+
 on:
   # Runs every day at 14:00 UTC = 10:00 AM Eastern / 9:00 AM Central
   schedule:
