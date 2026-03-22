@@ -368,7 +368,7 @@ class EmailNotifier:
             if key not in best or o.price_cad < best[key].price_cad:
                 best[key] = o
 
-        sorted_offers = sorted(best.values(), key=lambda o: (o.route_key, o.departure_date))
+        sorted_offers = sorted(best.values(), key=lambda o: o.price_cad)
 
         rows = []
         for o in sorted_offers:
