@@ -195,7 +195,7 @@ class SheetsClient:
             self._sheet.del_worksheet(self._sheet.worksheet("Analysis"))
         except gspread.WorksheetNotFound:
             pass
-        ws = self._sheet.add_worksheet(title="Analysis", rows=500, cols=12)
+        ws = self._sheet.add_worksheet(title="Analysis", rows=600, cols=12)
         sid = ws.id  # numeric sheetId needed for chart API calls
 
         # Read raw price history
@@ -205,145 +205,240 @@ class SheetsClient:
             ws.update([["No price history yet — run the tracker first."]], "A1")
             return
 
-        # Parse into pivot: date → route → min_price
         from collections import defaultdict
-        pivot: dict[str, dict[str, float]] = defaultdict(dict)
-        all_time_best: dict[str, tuple[float, str, str]] = {}  # route→(price,date,airlines)
+        dep_pivot:   dict[str, dict[str, float]] = defaultdict(dict)
+        check_pivot: dict[str, dict[str, float]] = defaultdict(dict)
+        all_time_best: dict[str, tuple[float, str, str]] = {}
+        airline_route_prices: dict[str, dict[str, list]] = defaultdict(lambda: defaultdict(list))
         routes: set[str] = set()
 
         for row in raw[1:]:
-            if len(row) < 5:
+            if len(row) < 3:
                 continue
-            date_str = row[0][:10]
-            route    = row[1]
-            airlines = row[4]
+            check_date = row[0][:10]
+            route      = row[1]
+            dep_date   = row[3] if len(row) > 3 else ""
+            airlines   = row[4] if len(row) > 4 else ""
             try:
                 price = float(row[2])
             except ValueError:
                 continue
             routes.add(route)
-            if route not in pivot[date_str] or price < pivot[date_str][route]:
-                pivot[date_str][route] = price
-            if route not in all_time_best or price < all_time_best[route][0]:
-                all_time_best[route] = (price, date_str, airlines)
 
-        sorted_routes = sorted(routes)
-        sorted_dates  = sorted(pivot.keys())
+            if dep_date:
+                if route not in dep_pivot[dep_date] or price < dep_pivot[dep_date][route]:
+                    dep_pivot[dep_date][route] = price
+
+            if route not in check_pivot[check_date] or price < check_pivot[check_date][route]:
+                check_pivot[check_date][route] = price
+
+            if route not in all_time_best or price < all_time_best[route][0]:
+                all_time_best[route] = (price, dep_date, airlines)
+
+            if airlines:
+                airline_route_prices[airlines][route].append(price)
+
+        sorted_routes      = sorted(routes)
+        sorted_dep_dates   = sorted(dep_pivot.keys())
+        sorted_check_dates = sorted(check_pivot.keys())
         now = datetime.utcnow().strftime("%b %d, %Y %H:%M UTC")
 
-        # ------ Build sheet data (track row indices as we go) ------
+        # ------ Build sheet data ------
         data: list[list] = []
 
         data.append(["Emma's Flight Price Analysis — YYZ to Tasmania"])
         data.append([f"Last updated: {now}"])
         data.append([])
 
-        sect1_idx = len(data)           # "ALL-TIME BEST PRICES" header row (0-indexed)
+        # Section 1 — all-time best
+        sect1_idx       = len(data)
         data.append(["ALL-TIME BEST PRICES"])
-        best_hdr_idx = len(data)        # column header row
-        data.append(["Route", "Best Price (CAD)", "Date Found", "Airlines"])
+        best_hdr_idx    = len(data)
+        data.append(["Route", "Best Price (CAD)", "Cheapest Departure", "Airlines"])
         best_data_start = len(data)
         for route in sorted_routes:
             if route in all_time_best:
-                price, date, airlines = all_time_best[route]
-                data.append([route, price, date, airlines])
-        best_data_end = len(data)       # exclusive
+                price, dep, als = all_time_best[route]
+                data.append([route, price, dep, als])
+        best_data_end = len(data)
 
         data.append([])
 
-        sect2_idx = len(data)           # "PRICE TREND" header row
-        data.append(["PRICE TREND OVER TIME"])
-        pivot_hdr_idx = len(data)       # pivot column-header row
-        data.append(["Date Checked"] + sorted_routes)
-        for date in sorted_dates:
-            data.append([date] + [pivot[date].get(r, "") for r in sorted_routes])
-        pivot_end_idx = len(data)       # exclusive
+        # Section 2 — pivot by Departure Date (which day is cheapest to fly)
+        sect2_idx   = len(data)
+        data.append(["CHEAPEST PRICE BY DEPARTURE DATE (which day should Emma fly?)"])
+        dep_hdr_idx = len(data)
+        data.append(["Departure Date"] + sorted_routes)
+        for dd in sorted_dep_dates:
+            data.append([dd] + [dep_pivot[dd].get(r, "") for r in sorted_routes])
+        dep_end_idx = len(data)
+
+        data.append([])
+
+        # Section 3 — pivot by Date Checked (price trend as tracker accumulates)
+        sect3_idx   = len(data)
+        data.append(["PRICE TREND OVER TIME (best price found each day the tracker ran)"])
+        chk_hdr_idx = len(data)
+        data.append(["Date Tracker Ran"] + sorted_routes)
+        for cd in sorted_check_dates:
+            data.append([cd] + [check_pivot[cd].get(r, "") for r in sorted_routes])
+        chk_end_idx = len(data)
+
+        data.append([])
+
+        # Section 4 — airline + route breakdown
+        sect4_idx      = len(data)
+        data.append(["AIRLINE & ROUTE BREAKDOWN (average and minimum price per airline)"])
+        air_hdr_idx    = len(data)
+        data.append(["Airline", "Route", "Avg Price (CAD)", "Min Price (CAD)", "# Observations"])
+        air_data_start = len(data)
+        for airline in sorted(airline_route_prices.keys()):
+            for route in sorted(airline_route_prices[airline].keys()):
+                prices = airline_route_prices[airline][route]
+                data.append([
+                    airline, route,
+                    round(sum(prices) / len(prices), 0),
+                    min(prices),
+                    len(prices),
+                ])
+        air_data_end = len(data)
 
         ws.update(data, "A1", value_input_option="USER_ENTERED")
 
         # ------ Formatting ------
         last_pivot_col = _col_letter(len(sorted_routes) + 1)
+        COLOR_SECTION  = {"red": 0.878, "green": 0.878, "blue": 0.878}
 
         # Big title
         ws.format("A1", {
-            "textFormat": {"bold": True, "fontSize": 14,
-                           "foregroundColor": COLOR_WHITE},
+            "textFormat": {"bold": True, "fontSize": 14, "foregroundColor": COLOR_WHITE},
             "backgroundColor": COLOR_HEADER,
         })
         # Section headers
-        for idx in [sect1_idx, sect2_idx]:
+        for idx in [sect1_idx, sect2_idx, sect3_idx, sect4_idx]:
             ws.format(f"A{idx+1}", {
                 "textFormat": {"bold": True, "fontSize": 11},
-                "backgroundColor": {"red": 0.878, "green": 0.878, "blue": 0.878},
+                "backgroundColor": COLOR_SECTION,
             })
-        # Best-prices column headers
+        # Column headers for section 1
         ws.format(f"A{best_hdr_idx+1}:D{best_hdr_idx+1}", {
             "backgroundColor": COLOR_HIST_HDR,
             "textFormat": {"bold": True, "foregroundColor": COLOR_WHITE},
             "horizontalAlignment": "CENTER",
         })
-        # Pivot column headers
-        ws.format(f"A{pivot_hdr_idx+1}:{last_pivot_col}{pivot_hdr_idx+1}", {
+        # Column headers for departure date pivot
+        ws.format(f"A{dep_hdr_idx+1}:{last_pivot_col}{dep_hdr_idx+1}", {
             "backgroundColor": COLOR_HIST_HDR,
             "textFormat": {"bold": True, "foregroundColor": COLOR_WHITE},
             "horizontalAlignment": "CENTER",
         })
-        # Highlight best-price cells below threshold
+        # Column headers for price trend pivot
+        ws.format(f"A{chk_hdr_idx+1}:{last_pivot_col}{chk_hdr_idx+1}", {
+            "backgroundColor": COLOR_HIST_HDR,
+            "textFormat": {"bold": True, "foregroundColor": COLOR_WHITE},
+            "horizontalAlignment": "CENTER",
+        })
+        # Column headers for airline section
+        ws.format(f"A{air_hdr_idx+1}:E{air_hdr_idx+1}", {
+            "backgroundColor": COLOR_HIST_HDR,
+            "textFormat": {"bold": True, "foregroundColor": COLOR_WHITE},
+            "horizontalAlignment": "CENTER",
+        })
+        # Highlight best-price cells below threshold in section 1
         for i in range(best_data_start, best_data_end):
-            route = sorted_routes[i - best_data_start] if (i - best_data_start) < len(sorted_routes) else None
+            route_idx = i - best_data_start
+            route = sorted_routes[route_idx] if route_idx < len(sorted_routes) else None
             if route and route in all_time_best and all_time_best[route][0] < threshold:
-                ws.format(f"B{i+1}", {"backgroundColor": COLOR_DEAL,
-                                       "textFormat": {"bold": True}})
+                ws.format(f"B{i+1}", {"backgroundColor": COLOR_DEAL, "textFormat": {"bold": True}})
         ws.freeze(rows=1)
 
         # ------ Charts via Sheets API batch_update ------
-        chart_anchor_row = pivot_end_idx + 2  # 0-indexed, below pivot data
+        # Charts are anchored below all data sections
+        chart_row = air_data_end + 3  # 0-indexed row below data
 
         requests = []
 
-        # 1. Line chart: price trend over time
-        series = [
-            {
-                "series": {"sourceRange": {"sources": [{
-                    "sheetId": sid,
-                    "startRowIndex": pivot_hdr_idx,
-                    "endRowIndex":   pivot_end_idx,
-                    "startColumnIndex": col + 1,
-                    "endColumnIndex":   col + 2,
-                }]}},
-                "targetAxis": "LEFT_AXIS",
-            }
-            for col, _ in enumerate(sorted_routes)
-        ]
-        requests.append({"addChart": {"chart": {
-            "spec": {
-                "title": "Price Trend — YYZ → Tasmania (CAD)",
-                "basicChart": {
-                    "chartType": "LINE",
-                    "legendPosition": "BOTTOM_LEGEND",
-                    "axis": [
-                        {"position": "BOTTOM_AXIS", "title": "Date Checked"},
-                        {"position": "LEFT_AXIS",   "title": "Price (CAD)"},
-                    ],
-                    "domains": [{"domain": {"sourceRange": {"sources": [{
-                        "sheetId": sid,
-                        "startRowIndex":    pivot_hdr_idx,
-                        "endRowIndex":      pivot_end_idx,
-                        "startColumnIndex": 0,
-                        "endColumnIndex":   1,
-                    }]}}}],
-                    "series": series,
-                    "headerCount": 1,
+        # 1. Line chart: cheapest price by departure date
+        if len(sorted_dep_dates) >= 2:
+            requests.append({"addChart": {"chart": {
+                "spec": {
+                    "title": "Cheapest Price by Departure Date — YYZ → Tasmania (CAD)",
+                    "basicChart": {
+                        "chartType": "LINE",
+                        "legendPosition": "BOTTOM_LEGEND",
+                        "axis": [
+                            {"position": "BOTTOM_AXIS", "title": "Departure Date"},
+                            {"position": "LEFT_AXIS",   "title": "Price (CAD)"},
+                        ],
+                        "domains": [{"domain": {"sourceRange": {"sources": [{
+                            "sheetId": sid,
+                            "startRowIndex":    dep_hdr_idx,
+                            "endRowIndex":      dep_end_idx,
+                            "startColumnIndex": 0, "endColumnIndex": 1,
+                        }]}}}],
+                        "series": [
+                            {
+                                "series": {"sourceRange": {"sources": [{
+                                    "sheetId": sid,
+                                    "startRowIndex":    dep_hdr_idx,
+                                    "endRowIndex":      dep_end_idx,
+                                    "startColumnIndex": col + 1,
+                                    "endColumnIndex":   col + 2,
+                                }]}},
+                                "targetAxis": "LEFT_AXIS",
+                            }
+                            for col in range(len(sorted_routes))
+                        ],
+                        "headerCount": 1,
+                    },
                 },
-            },
-            "position": {"overlayPosition": {
-                "anchorCell": {"sheetId": sid,
-                               "rowIndex": chart_anchor_row, "columnIndex": 0},
-                "widthPixels": 680, "heightPixels": 400,
-            }},
-        }}})
+                "position": {"overlayPosition": {
+                    "anchorCell": {"sheetId": sid, "rowIndex": chart_row, "columnIndex": 0},
+                    "widthPixels": 680, "heightPixels": 400,
+                }},
+            }}})
 
-        # 2. Bar chart: best price per route vs budget
+        # 2. Line chart: price trend over time (tracker run history)
+        if len(sorted_check_dates) >= 2:
+            requests.append({"addChart": {"chart": {
+                "spec": {
+                    "title": "Price Trend Over Time — YYZ → Tasmania (CAD)",
+                    "basicChart": {
+                        "chartType": "LINE",
+                        "legendPosition": "BOTTOM_LEGEND",
+                        "axis": [
+                            {"position": "BOTTOM_AXIS", "title": "Date Tracker Ran"},
+                            {"position": "LEFT_AXIS",   "title": "Price (CAD)"},
+                        ],
+                        "domains": [{"domain": {"sourceRange": {"sources": [{
+                            "sheetId": sid,
+                            "startRowIndex":    chk_hdr_idx,
+                            "endRowIndex":      chk_end_idx,
+                            "startColumnIndex": 0, "endColumnIndex": 1,
+                        }]}}}],
+                        "series": [
+                            {
+                                "series": {"sourceRange": {"sources": [{
+                                    "sheetId": sid,
+                                    "startRowIndex":    chk_hdr_idx,
+                                    "endRowIndex":      chk_end_idx,
+                                    "startColumnIndex": col + 1,
+                                    "endColumnIndex":   col + 2,
+                                }]}},
+                                "targetAxis": "LEFT_AXIS",
+                            }
+                            for col in range(len(sorted_routes))
+                        ],
+                        "headerCount": 1,
+                    },
+                },
+                "position": {"overlayPosition": {
+                    "anchorCell": {"sheetId": sid, "rowIndex": chart_row, "columnIndex": 7},
+                    "widthPixels": 680, "heightPixels": 400,
+                }},
+            }}})
+
+        # 3. Bar chart: best price per route vs budget
         if best_data_end > best_data_start:
             requests.append({"addChart": {"chart": {
                 "spec": {
@@ -359,22 +454,19 @@ class SheetsClient:
                             "sheetId": sid,
                             "startRowIndex":    best_data_start,
                             "endRowIndex":      best_data_end,
-                            "startColumnIndex": 0,
-                            "endColumnIndex":   1,
+                            "startColumnIndex": 0, "endColumnIndex": 1,
                         }]}}}],
                         "series": [{"series": {"sourceRange": {"sources": [{
                             "sheetId": sid,
                             "startRowIndex":    best_data_start,
                             "endRowIndex":      best_data_end,
-                            "startColumnIndex": 1,
-                            "endColumnIndex":   2,
+                            "startColumnIndex": 1, "endColumnIndex": 2,
                         }]}}, "targetAxis": "BOTTOM_AXIS"}],
                         "headerCount": 0,
                     },
                 },
                 "position": {"overlayPosition": {
-                    "anchorCell": {"sheetId": sid,
-                                   "rowIndex": chart_anchor_row, "columnIndex": 6},
+                    "anchorCell": {"sheetId": sid, "rowIndex": chart_row + 25, "columnIndex": 0},
                     "widthPixels": 480, "heightPixels": 300,
                 }},
             }}})
@@ -383,8 +475,8 @@ class SheetsClient:
             self._sheet.batch_update({"requests": requests})
 
         logger.info(
-            "Analysis tab built: %d route(s), %d date(s), %d chart(s).",
-            len(sorted_routes), len(sorted_dates), len(requests),
+            "Analysis tab built: %d route(s), %d dep dates, %d check dates, %d chart(s).",
+            len(sorted_routes), len(sorted_dep_dates), len(sorted_check_dates), len(requests),
         )
 
     # ------------------------------------------------------------------

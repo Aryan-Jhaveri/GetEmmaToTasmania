@@ -64,14 +64,17 @@ def main() -> None:
     # 2. Build route list and search Google Flights via SerpAPI
     # ------------------------------------------------------------------
     client = SerpApiClient()
-    route_pairs = client.build_routes(origins, destinations, start_date, end_date, step_days)
-    logger.info("Searching %d route(s) from %s to %s.", len(route_pairs), start_date, end_date)
+    routes = client.build_routes(origins, destinations, start_date, end_date, step_days)
+    logger.info(
+        "Searching %d route/date combinations (%s → %s, every %dd).",
+        len(routes), start_date, end_date, step_days,
+    )
 
-    if not route_pairs:
+    if not routes:
         logger.warning("No routes to search — check date range in Settings.")
         return
 
-    raw_offers = client.search_cheapest_offers(route_pairs)
+    raw_offers = client.search_cheapest_offers(routes)
     logger.info("SerpAPI returned %d offers total.", len(raw_offers))
 
     if not raw_offers:

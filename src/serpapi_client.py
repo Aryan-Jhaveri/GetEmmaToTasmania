@@ -1,5 +1,6 @@
 import logging
 import os
+from datetime import date, timedelta
 from itertools import product
 
 import requests
@@ -23,48 +24,40 @@ class SerpApiClient:
         start_date: str,
         end_date: str,
         step_days: int = 7,
-    ) -> list[tuple[RouteConfig, str]]:
-        """
-        Return (RouteConfig, end_date) pairs — one per origin/destination combo.
-        SerpAPI searches a date range so we make one call per route pair, not per date.
-        """
-        return [
-            (RouteConfig(o, d, start_date), end_date)
-            for o, d in product(origins, destinations)
-        ]
+    ) -> list[RouteConfig]:
+        """One RouteConfig per (origin, destination, departure_date) step."""
+        routes = []
+        current = date.fromisoformat(start_date)
+        end = date.fromisoformat(end_date)
+        while current <= end:
+            for o, d in product(origins, destinations):
+                routes.append(RouteConfig(o, d, current.isoformat()))
+            current += timedelta(days=step_days)
+        return routes
 
     def search_cheapest_offers(
         self,
-        route_pairs: list[tuple[RouteConfig, str]],
-        max_results: int = 10,
+        routes: list[RouteConfig],
+        max_results: int = 5,
     ) -> list[FlightOffer]:
+        """One SerpAPI call per route — returns cheapest offers per departure date."""
         all_offers: list[FlightOffer] = []
-        for route, end_date in route_pairs:
-            offers = self._search_route(route, end_date, max_results)
+        for route in routes:
+            offers = self._search_route(route, max_results)
             all_offers.extend(offers)
         return all_offers
 
-    def _search_route(
-        self,
-        route: RouteConfig,
-        end_date: str,
-        max_results: int,
-    ) -> list[FlightOffer]:
-        """
-        SerpAPI Google Flights docs:
-        https://serpapi.com/google-flights-api
-        type=2 → one-way, currency=CAD, hl=en
-        """
+    def _search_route(self, route: RouteConfig, max_results: int) -> list[FlightOffer]:
         params = {
-            "engine": "google_flights",
-            "departure_id": route.origin,
-            "arrival_id": route.destination,
-            "outbound_date": route.departure_date,   # start of range
-            "type": "2",                             # 1=round-trip, 2=one-way
-            "currency": config.CURRENCY,
-            "hl": "en",
-            "api_key": self._api_key,
-            "no_cache": "false",
+            "engine":        "google_flights",
+            "departure_id":  route.origin,
+            "arrival_id":    route.destination,
+            "outbound_date": route.departure_date,
+            "type":          "2",       # one-way
+            "currency":      config.CURRENCY,
+            "hl":            "en",
+            "api_key":       self._api_key,
+            "no_cache":      "false",
         }
 
         offers = []
@@ -100,40 +93,31 @@ class SerpApiClient:
             if not segments:
                 return None
 
-            origin = segments[0]["departure_airport"]["id"]
+            origin      = segments[0]["departure_airport"]["id"]
             destination = segments[-1]["arrival_airport"]["id"]
             departure_date = segments[0]["departure_airport"]["time"][:10]
-            num_stops = len(segments) - 1
+            num_stops   = len(segments) - 1
 
-            airlines = " / ".join(
-                dict.fromkeys(  # preserve order, deduplicate
-                    seg.get("airline", "") for seg in segments
-                    if seg.get("airline")
-                )
+            airlines = " / ".join(dict.fromkeys(
+                seg.get("airline", "") for seg in segments if seg.get("airline")
+            ))
+
+            total_minutes = raw.get("total_duration", 0) or sum(
+                seg.get("duration", 0) for seg in segments
             )
-
-            total_minutes = raw.get("total_duration", 0)
-            if not total_minutes:
-                total_minutes = sum(seg.get("duration", 0) for seg in segments)
             hours, mins = divmod(int(total_minutes), 60)
             duration = f"{hours}h {mins:02d}m"
 
-            # Construct a Google Flights search link for this route/date
             booking_url = (
                 f"https://www.google.com/travel/flights?q=Flights+from+"
                 f"{route.origin}+to+{route.destination}+on+{departure_date}"
             )
 
             return FlightOffer(
-                origin=origin,
-                destination=destination,
-                departure_date=departure_date,
-                price_cad=price_cad,
-                airlines=airlines,
-                num_stops=num_stops,
-                duration=duration,
-                source="Google Flights",
-                booking_url=booking_url,
+                origin=origin, destination=destination,
+                departure_date=departure_date, price_cad=price_cad,
+                airlines=airlines, num_stops=num_stops, duration=duration,
+                source="Google Flights", booking_url=booking_url,
             )
         except (KeyError, IndexError, ValueError, TypeError) as e:
             logger.debug("Could not parse SerpAPI offer: %s — %s", e, raw)
