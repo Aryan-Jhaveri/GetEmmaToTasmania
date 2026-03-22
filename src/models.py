@@ -3,6 +3,30 @@ from datetime import datetime
 
 
 @dataclass
+class DealOffer:
+    """A FlightOffer that qualified as a deal, with context explaining why."""
+    offer: "FlightOffer"
+    tags: list[str]          # e.g. ["BELOW_BUDGET", "BEST_DATE"]
+    route_avg_cad: float     # average price across all departure dates for this route today
+    hist_min_cad: float | None = None  # all-time low for this route (None if no history)
+
+    @property
+    def is_primary_deal(self) -> bool:
+        """True if this qualifies to trigger an email (not just contextual filler)."""
+        return any(t in self.tags for t in ("BELOW_BUDGET", "ALL_TIME_LOW", "NEAR_ALL_TIME_LOW"))
+
+    @property
+    def best_tag(self) -> str:
+        """Single most important tag for display."""
+        priority = ["ALL_TIME_LOW", "BELOW_BUDGET", "NEAR_ALL_TIME_LOW",
+                    "BELOW_ROUTE_AVG", "BEST_DATE"]
+        for t in priority:
+            if t in self.tags:
+                return t
+        return self.tags[0] if self.tags else ""
+
+
+@dataclass
 class RouteConfig:
     origin: str        # IATA code, e.g. "YYZ"
     destination: str   # IATA code, e.g. "HBA"

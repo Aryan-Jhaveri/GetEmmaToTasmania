@@ -15,6 +15,7 @@ import config
 from src.serpapi_client import SerpApiClient
 from src.notifier import EmailNotifier
 from src.price_analyzer import cheapest_per_route, find_deals
+from src.models import DealOffer
 from src.sheets_client import SheetsClient
 
 load_dotenv()
@@ -106,11 +107,13 @@ def main() -> None:
     # 3. Load historical baselines and identify deals
     # ------------------------------------------------------------------
     historical_mins = sheets.read_historical_minimums()
-    best_offers = cheapest_per_route(raw_offers)
+    best_offers = cheapest_per_route(raw_offers)  # used for dashboard only
 
-    deals = find_deals(best_offers, historical_mins, threshold, min_drop_pct)
+    deals: list[DealOffer] = find_deals(raw_offers, historical_mins, threshold, min_drop_pct)
+    primary_deals = [d for d in deals if d.is_primary_deal]
     logger.info(
-        "Found %d deal(s) out of %d best offers.", len(deals), len(best_offers)
+        "Found %d deal(s) (%d primary, %d contextual) across %d route/date pairs.",
+        len(deals), len(primary_deals), len(deals) - len(primary_deals), len(best_offers),
     )
 
     # ------------------------------------------------------------------
@@ -123,16 +126,16 @@ def main() -> None:
     # ------------------------------------------------------------------
     # 5. Send email alert if deals found
     # ------------------------------------------------------------------
-    if deals and recipient:
+    if primary_deals and recipient:
         notifier = EmailNotifier()
         notifier.send_alert(
             deals, best_offers, recipient, threshold, historical_mins,
             raw_offers, booking_nudge=booking_nudge,
         )
-    elif deals and not recipient:
+    elif primary_deals and not recipient:
         logger.warning("Deals found but no Notification Email set in Settings!")
     else:
-        logger.info("No deals today — no email sent.")
+        logger.info("No primary deals today — no email sent.")
 
     logger.info("=== Done ===")
 
