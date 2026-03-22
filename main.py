@@ -93,7 +93,8 @@ def main() -> None:
     # 4. Update Google Sheets
     # ------------------------------------------------------------------
     sheets.write_dashboard(best_offers, threshold)
-    sheets.append_price_history(raw_offers)  # log all offers, not just best
+    sheets.append_price_history(raw_offers)
+    sheets.write_analysis_tab(threshold)
 
     # ------------------------------------------------------------------
     # 5. Send email alert if deals found

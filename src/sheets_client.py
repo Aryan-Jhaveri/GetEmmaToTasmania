@@ -185,6 +185,209 @@ class SheetsClient:
         return minimums
 
     # ------------------------------------------------------------------
+    # Analysis tab
+    # ------------------------------------------------------------------
+
+    def write_analysis_tab(self, threshold: float) -> None:
+        """Recreate the Analysis tab with pivot summary + embedded charts."""
+        # Always delete + recreate to avoid duplicate charts on each run
+        try:
+            self._sheet.del_worksheet(self._sheet.worksheet("Analysis"))
+        except gspread.WorksheetNotFound:
+            pass
+        ws = self._sheet.add_worksheet(title="Analysis", rows=500, cols=12)
+        sid = ws.id  # numeric sheetId needed for chart API calls
+
+        # Read raw price history
+        history_ws = self._get_or_create_tab(config.SHEET_HISTORY)
+        raw = history_ws.get_all_values()
+        if len(raw) <= 1:
+            ws.update([["No price history yet — run the tracker first."]], "A1")
+            return
+
+        # Parse into pivot: date → route → min_price
+        from collections import defaultdict
+        pivot: dict[str, dict[str, float]] = defaultdict(dict)
+        all_time_best: dict[str, tuple[float, str, str]] = {}  # route→(price,date,airlines)
+        routes: set[str] = set()
+
+        for row in raw[1:]:
+            if len(row) < 5:
+                continue
+            date_str = row[0][:10]
+            route    = row[1]
+            airlines = row[4]
+            try:
+                price = float(row[2])
+            except ValueError:
+                continue
+            routes.add(route)
+            if route not in pivot[date_str] or price < pivot[date_str][route]:
+                pivot[date_str][route] = price
+            if route not in all_time_best or price < all_time_best[route][0]:
+                all_time_best[route] = (price, date_str, airlines)
+
+        sorted_routes = sorted(routes)
+        sorted_dates  = sorted(pivot.keys())
+        now = datetime.utcnow().strftime("%b %d, %Y %H:%M UTC")
+
+        # ------ Build sheet data (track row indices as we go) ------
+        data: list[list] = []
+
+        data.append(["Emma's Flight Price Analysis — YYZ to Tasmania"])
+        data.append([f"Last updated: {now}"])
+        data.append([])
+
+        sect1_idx = len(data)           # "ALL-TIME BEST PRICES" header row (0-indexed)
+        data.append(["ALL-TIME BEST PRICES"])
+        best_hdr_idx = len(data)        # column header row
+        data.append(["Route", "Best Price (CAD)", "Date Found", "Airlines"])
+        best_data_start = len(data)
+        for route in sorted_routes:
+            if route in all_time_best:
+                price, date, airlines = all_time_best[route]
+                data.append([route, price, date, airlines])
+        best_data_end = len(data)       # exclusive
+
+        data.append([])
+
+        sect2_idx = len(data)           # "PRICE TREND" header row
+        data.append(["PRICE TREND OVER TIME"])
+        pivot_hdr_idx = len(data)       # pivot column-header row
+        data.append(["Date Checked"] + sorted_routes)
+        for date in sorted_dates:
+            data.append([date] + [pivot[date].get(r, "") for r in sorted_routes])
+        pivot_end_idx = len(data)       # exclusive
+
+        ws.update(data, "A1", value_input_option="USER_ENTERED")
+
+        # ------ Formatting ------
+        last_pivot_col = _col_letter(len(sorted_routes) + 1)
+
+        # Big title
+        ws.format("A1", {
+            "textFormat": {"bold": True, "fontSize": 14,
+                           "foregroundColor": COLOR_WHITE},
+            "backgroundColor": COLOR_HEADER,
+        })
+        # Section headers
+        for idx in [sect1_idx, sect2_idx]:
+            ws.format(f"A{idx+1}", {
+                "textFormat": {"bold": True, "fontSize": 11},
+                "backgroundColor": {"red": 0.878, "green": 0.878, "blue": 0.878},
+            })
+        # Best-prices column headers
+        ws.format(f"A{best_hdr_idx+1}:D{best_hdr_idx+1}", {
+            "backgroundColor": COLOR_HIST_HDR,
+            "textFormat": {"bold": True, "foregroundColor": COLOR_WHITE},
+            "horizontalAlignment": "CENTER",
+        })
+        # Pivot column headers
+        ws.format(f"A{pivot_hdr_idx+1}:{last_pivot_col}{pivot_hdr_idx+1}", {
+            "backgroundColor": COLOR_HIST_HDR,
+            "textFormat": {"bold": True, "foregroundColor": COLOR_WHITE},
+            "horizontalAlignment": "CENTER",
+        })
+        # Highlight best-price cells below threshold
+        for i in range(best_data_start, best_data_end):
+            route = sorted_routes[i - best_data_start] if (i - best_data_start) < len(sorted_routes) else None
+            if route and route in all_time_best and all_time_best[route][0] < threshold:
+                ws.format(f"B{i+1}", {"backgroundColor": COLOR_DEAL,
+                                       "textFormat": {"bold": True}})
+        ws.freeze(rows=1)
+
+        # ------ Charts via Sheets API batch_update ------
+        chart_anchor_row = pivot_end_idx + 2  # 0-indexed, below pivot data
+
+        requests = []
+
+        # 1. Line chart: price trend over time
+        series = [
+            {
+                "series": {"sourceRange": {"sources": [{
+                    "sheetId": sid,
+                    "startRowIndex": pivot_hdr_idx,
+                    "endRowIndex":   pivot_end_idx,
+                    "startColumnIndex": col + 1,
+                    "endColumnIndex":   col + 2,
+                }]}},
+                "targetAxis": "LEFT_AXIS",
+            }
+            for col, _ in enumerate(sorted_routes)
+        ]
+        requests.append({"addChart": {"chart": {
+            "spec": {
+                "title": "Price Trend — YYZ → Tasmania (CAD)",
+                "basicChart": {
+                    "chartType": "LINE",
+                    "legendPosition": "BOTTOM_LEGEND",
+                    "axis": [
+                        {"position": "BOTTOM_AXIS", "title": "Date Checked"},
+                        {"position": "LEFT_AXIS",   "title": "Price (CAD)"},
+                    ],
+                    "domains": [{"domain": {"sourceRange": {"sources": [{
+                        "sheetId": sid,
+                        "startRowIndex":    pivot_hdr_idx,
+                        "endRowIndex":      pivot_end_idx,
+                        "startColumnIndex": 0,
+                        "endColumnIndex":   1,
+                    }]}}}],
+                    "series": series,
+                    "headerCount": 1,
+                },
+            },
+            "position": {"overlayPosition": {
+                "anchorCell": {"sheetId": sid,
+                               "rowIndex": chart_anchor_row, "columnIndex": 0},
+                "widthPixels": 680, "heightPixels": 400,
+            }},
+        }}})
+
+        # 2. Bar chart: best price per route vs budget
+        if best_data_end > best_data_start:
+            requests.append({"addChart": {"chart": {
+                "spec": {
+                    "title": f"Best Price per Route vs Budget (${threshold:,.0f} CAD)",
+                    "basicChart": {
+                        "chartType": "BAR",
+                        "legendPosition": "NO_LEGEND",
+                        "axis": [
+                            {"position": "BOTTOM_AXIS", "title": "Price (CAD)"},
+                            {"position": "LEFT_AXIS",   "title": "Route"},
+                        ],
+                        "domains": [{"domain": {"sourceRange": {"sources": [{
+                            "sheetId": sid,
+                            "startRowIndex":    best_data_start,
+                            "endRowIndex":      best_data_end,
+                            "startColumnIndex": 0,
+                            "endColumnIndex":   1,
+                        }]}}}],
+                        "series": [{"series": {"sourceRange": {"sources": [{
+                            "sheetId": sid,
+                            "startRowIndex":    best_data_start,
+                            "endRowIndex":      best_data_end,
+                            "startColumnIndex": 1,
+                            "endColumnIndex":   2,
+                        }]}}, "targetAxis": "BOTTOM_AXIS"}],
+                        "headerCount": 0,
+                    },
+                },
+                "position": {"overlayPosition": {
+                    "anchorCell": {"sheetId": sid,
+                                   "rowIndex": chart_anchor_row, "columnIndex": 6},
+                    "widthPixels": 480, "heightPixels": 300,
+                }},
+            }}})
+
+        if requests:
+            self._sheet.batch_update({"requests": requests})
+
+        logger.info(
+            "Analysis tab built: %d route(s), %d date(s), %d chart(s).",
+            len(sorted_routes), len(sorted_dates), len(requests),
+        )
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
