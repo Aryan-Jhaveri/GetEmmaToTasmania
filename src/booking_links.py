@@ -32,7 +32,7 @@ def get_booking_links(offer: FlightOffer) -> list[dict]:
             "label": "Google Flights",
             "url": (
                 f"https://www.google.com/travel/flights?q=Flights+from+"
-                f"{o}+to+{d}+on+{date}"
+                f"{o}+to+{d}+on+{date}+one+way"
             ),
             "primary": not offer.booking_url,  # primary if no Kiwi link
         },
