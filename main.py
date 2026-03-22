@@ -104,7 +104,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     if deals and recipient:
         notifier = EmailNotifier()
-        notifier.send_alert(deals, best_offers, recipient, threshold, historical_mins)
+        notifier.send_alert(deals, best_offers, recipient, threshold, historical_mins, raw_offers)
     elif deals and not recipient:
         logger.warning("Deals found but no Notification Email set in Settings!")
     else:

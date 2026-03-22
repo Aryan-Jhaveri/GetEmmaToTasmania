@@ -196,7 +196,6 @@ class SheetsClient:
         except gspread.WorksheetNotFound:
             pass
         ws = self._sheet.add_worksheet(title="Analysis", rows=600, cols=12)
-        sid = ws.id  # numeric sheetId needed for chart API calls
 
         # Read raw price history
         history_ws = self._get_or_create_tab(config.SHEET_HISTORY)
@@ -352,131 +351,13 @@ class SheetsClient:
                 ws.format(f"B{i+1}", {"backgroundColor": COLOR_DEAL, "textFormat": {"bold": True}})
         ws.freeze(rows=1)
 
-        # ------ Charts via Sheets API batch_update ------
-        # Charts are anchored below all data sections
-        chart_row = air_data_end + 3  # 0-indexed row below data
-
-        requests = []
-
-        # 1. Line chart: cheapest price by departure date
-        if len(sorted_dep_dates) >= 2:
-            requests.append({"addChart": {"chart": {
-                "spec": {
-                    "title": "Cheapest Price by Departure Date — YYZ → Tasmania (CAD)",
-                    "basicChart": {
-                        "chartType": "LINE",
-                        "legendPosition": "BOTTOM_LEGEND",
-                        "axis": [
-                            {"position": "BOTTOM_AXIS", "title": "Departure Date"},
-                            {"position": "LEFT_AXIS",   "title": "Price (CAD)"},
-                        ],
-                        "domains": [{"domain": {"sourceRange": {"sources": [{
-                            "sheetId": sid,
-                            "startRowIndex":    dep_hdr_idx,
-                            "endRowIndex":      dep_end_idx,
-                            "startColumnIndex": 0, "endColumnIndex": 1,
-                        }]}}}],
-                        "series": [
-                            {
-                                "series": {"sourceRange": {"sources": [{
-                                    "sheetId": sid,
-                                    "startRowIndex":    dep_hdr_idx,
-                                    "endRowIndex":      dep_end_idx,
-                                    "startColumnIndex": col + 1,
-                                    "endColumnIndex":   col + 2,
-                                }]}},
-                                "targetAxis": "LEFT_AXIS",
-                            }
-                            for col in range(len(sorted_routes))
-                        ],
-                        "headerCount": 1,
-                    },
-                },
-                "position": {"overlayPosition": {
-                    "anchorCell": {"sheetId": sid, "rowIndex": chart_row, "columnIndex": 0},
-                    "widthPixels": 680, "heightPixels": 400,
-                }},
-            }}})
-
-        # 2. Line chart: price trend over time (tracker run history)
-        if len(sorted_check_dates) >= 2:
-            requests.append({"addChart": {"chart": {
-                "spec": {
-                    "title": "Price Trend Over Time — YYZ → Tasmania (CAD)",
-                    "basicChart": {
-                        "chartType": "LINE",
-                        "legendPosition": "BOTTOM_LEGEND",
-                        "axis": [
-                            {"position": "BOTTOM_AXIS", "title": "Date Tracker Ran"},
-                            {"position": "LEFT_AXIS",   "title": "Price (CAD)"},
-                        ],
-                        "domains": [{"domain": {"sourceRange": {"sources": [{
-                            "sheetId": sid,
-                            "startRowIndex":    chk_hdr_idx,
-                            "endRowIndex":      chk_end_idx,
-                            "startColumnIndex": 0, "endColumnIndex": 1,
-                        }]}}}],
-                        "series": [
-                            {
-                                "series": {"sourceRange": {"sources": [{
-                                    "sheetId": sid,
-                                    "startRowIndex":    chk_hdr_idx,
-                                    "endRowIndex":      chk_end_idx,
-                                    "startColumnIndex": col + 1,
-                                    "endColumnIndex":   col + 2,
-                                }]}},
-                                "targetAxis": "LEFT_AXIS",
-                            }
-                            for col in range(len(sorted_routes))
-                        ],
-                        "headerCount": 1,
-                    },
-                },
-                "position": {"overlayPosition": {
-                    "anchorCell": {"sheetId": sid, "rowIndex": chart_row, "columnIndex": 7},
-                    "widthPixels": 680, "heightPixels": 400,
-                }},
-            }}})
-
-        # 3. Bar chart: best price per route vs budget
-        if best_data_end > best_data_start:
-            requests.append({"addChart": {"chart": {
-                "spec": {
-                    "title": f"Best Price per Route vs Budget (${threshold:,.0f} CAD)",
-                    "basicChart": {
-                        "chartType": "BAR",
-                        "legendPosition": "NO_LEGEND",
-                        "axis": [
-                            {"position": "BOTTOM_AXIS", "title": "Price (CAD)"},
-                            {"position": "LEFT_AXIS",   "title": "Route"},
-                        ],
-                        "domains": [{"domain": {"sourceRange": {"sources": [{
-                            "sheetId": sid,
-                            "startRowIndex":    best_data_start,
-                            "endRowIndex":      best_data_end,
-                            "startColumnIndex": 0, "endColumnIndex": 1,
-                        }]}}}],
-                        "series": [{"series": {"sourceRange": {"sources": [{
-                            "sheetId": sid,
-                            "startRowIndex":    best_data_start,
-                            "endRowIndex":      best_data_end,
-                            "startColumnIndex": 1, "endColumnIndex": 2,
-                        }]}}, "targetAxis": "BOTTOM_AXIS"}],
-                        "headerCount": 0,
-                    },
-                },
-                "position": {"overlayPosition": {
-                    "anchorCell": {"sheetId": sid, "rowIndex": chart_row + 25, "columnIndex": 0},
-                    "widthPixels": 480, "heightPixels": 300,
-                }},
-            }}})
-
-        if requests:
-            self._sheet.batch_update({"requests": requests})
+        # Charts are intentionally NOT generated here — add them manually in Google Sheets
+        # once, using Insert → Chart on the data ranges in this tab. They will persist
+        # across data refreshes since we only update the data cells, not the chart objects.
 
         logger.info(
-            "Analysis tab built: %d route(s), %d dep dates, %d check dates, %d chart(s).",
-            len(sorted_routes), len(sorted_dep_dates), len(sorted_check_dates), len(requests),
+            "Analysis tab built: %d route(s), %d dep dates, %d check dates.",
+            len(sorted_routes), len(sorted_dep_dates), len(sorted_check_dates),
         )
 
     # ------------------------------------------------------------------
